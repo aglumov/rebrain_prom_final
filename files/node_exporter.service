@@ -1,6 +1,7 @@
 [Unit]
 Description=Node Exporter
 After=network.target
+Wants=network-online.target
  
 [Service]
 User=root

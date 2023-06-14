@@ -22,12 +22,6 @@
       - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-buildx-plugin_0.10.5-1~ubuntu.20.04~focal_amd64.deb
       - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-compose-plugin_2.18.1-1~ubuntu.20.04~focal_amd64.deb
   
-    - name: Download Cadvisor
-      ansible.builtin.get_url:
-        url: "https://github.com/google/cadvisor/releases/download/v0.47.0/cadvisor-v0.47.0-linux-amd64"
-        dest: "/usr/local/bin/cadvisor"
-        mode: "0755"
-  
     - name: Create dir
       ansible.builtin.file:
         path: "{{ item }}"
@@ -37,6 +31,7 @@
       - /opt/wordpress/db_data
       - /opt/wordpress/wordpress_data
       - /opt/node_exporter
+      - /opt/cadvisor
   
     - name: Copy Docker Compose file
       ansible.builtin.copy:
@@ -46,6 +41,12 @@
       - { src: "files/docker-compose.yml", dest: "/opt/wordpress/docker-compose.yml"}
       - { src: "files/my.cnf", dest: "/opt/wordpress/my.cnf" }
   
+    - name: Download Cadvisor
+      ansible.builtin.get_url:
+        url: "https://github.com/google/cadvisor/releases/download/v0.47.0/cadvisor-v0.47.0-linux-amd64"
+        dest: "/opt/cadvisor/cadvisor"
+        mode: "0755"
+  
     - name: Add systemd file for Cadvisor
       ansible.builtin.copy:
         src: "files/cadvisor.service"
@@ -54,6 +55,14 @@
         - Reload systemd
         - Restart cadvisor
   
+    - name: Download and unarchive Node Exporter
+      ansible.builtin.unarchive:
+        src: https://github.com/prometheus/node_exporter/releases/download/v1.6.0/node_exporter-1.6.0.linux-amd64.tar.gz
+        dest: "/opt/node_exporter"
+        remote_src: true
+        extra_opts:
+        - "--strip-component=1"
+
     - name: Add systemd file for Node exporter
       ansible.builtin.copy:
         src: "files/node_exporter.service"
@@ -62,13 +71,6 @@
         - Reload systemd
         - Restart node_exporter
   
-    - name: Download and unarchive Node Exporter
-      ansible.builtin.unarchive:
-        src: https://github.com/prometheus/node_exporter/releases/download/v1.6.0/node_exporter-1.6.0.linux-amd64.tar.gz
-        dest: "/opt/node_exporter"
-        remote_src: true
-        extra_opts:
-        - "--strip-component=1"
     when: inventory_hostname == "node1"
 
   - name: Install Prometheus and Grafana
