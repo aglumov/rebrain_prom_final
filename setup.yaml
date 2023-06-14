@@ -1,0 +1,149 @@
+---
+- name: Install Infrastructure
+  hosts: all
+  become: true
+
+  tasks: 
+  - name: Update packages
+    ansible.builtin.apt:
+      update_cache: true
+      upgrade: "full"
+
+  - name: Install Wordpress and exporters
+    block:
+    - name: Install Docker
+      ansible.builtin.apt:
+        deb: "{{ item }}"
+        state: present
+      loop:
+      - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/containerd.io_1.6.21-1_amd64.deb
+      - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-ce-cli_24.0.2-1~ubuntu.20.04~focal_amd64.deb
+      - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-ce_24.0.2-1~ubuntu.20.04~focal_amd64.deb
+      - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-buildx-plugin_0.10.5-1~ubuntu.20.04~focal_amd64.deb
+      - https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-compose-plugin_2.18.1-1~ubuntu.20.04~focal_amd64.deb
+  
+    - name: Download Cadvisor
+      ansible.builtin.get_url:
+        url: "https://github.com/google/cadvisor/releases/download/v0.47.0/cadvisor-v0.47.0-linux-amd64"
+        dest: "/usr/local/bin/cadvisor"
+        mode: "0755"
+  
+    - name: Create dir
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: 
+      - /opt/wordpress/db_data
+      - /opt/wordpress/wordpress_data
+      - /opt/node_exporter
+  
+    - name: Copy Docker Compose file
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      loop:
+      - { src: "files/docker-compose.yml", dest: "/opt/wordpress/docker-compose.yml"}
+      - { src: "files/my.cnf", dest: "/opt/wordpress/my.cnf" }
+  
+    - name: Add systemd file for Cadvisor
+      ansible.builtin.copy:
+        src: "files/cadvisor.service"
+        dest: "/etc/systemd/system/cadvisor.service"
+      notify:
+        - Reload systemd
+        - Restart cadvisor
+  
+    - name: Add systemd file for Node exporter
+      ansible.builtin.copy:
+        src: "files/node_exporter.service"
+        dest: "/etc/systemd/system/node_exporter.service"
+      notify:
+        - Reload systemd
+        - Restart node_exporter
+  
+    - name: Download and unarchive Node Exporter
+      ansible.builtin.unarchive:
+        src: https://github.com/prometheus/node_exporter/releases/download/v1.6.0/node_exporter-1.6.0.linux-amd64.tar.gz
+        dest: "/opt/node_exporter"
+        remote_src: true
+        extra_opts:
+        - "--strip-component=1"
+    when: inventory_hostname == "node1"
+
+  - name: Install Prometheus and Grafana
+    block:
+    
+    - name: Create dir
+      ansible.builtin.file:
+        path: "/opt/prometheus"
+        state: directory
+        mode: "0755"
+
+    - name: Check if prometheus is installed
+      ansible.builtin.stat:
+        path: /opt/prometheus/prometheus
+      register: prometheus_binary_stat
+
+    - name: Download and unarchive Prometheus
+      ansible.builtin.unarchive:
+        src: https://github.com/prometheus/prometheus/releases/download/v2.44.0/prometheus-2.44.0.linux-amd64.tar.gz
+        dest: "/opt/prometheus"
+        remote_src: true
+        extra_opts:
+        - "--strip-component=1"
+      when: not prometheus_binary_stat.stat.exists
+
+    - name: Add systemd file for Prometheus
+      ansible.builtin.copy:
+        src: "files/prometheus.service"
+        dest: "/etc/systemd/system/prometheus.service"
+      notify:
+        - Reload systemd
+        - Restart prometheus
+
+    - name: Tmpl
+      ansible.builtin.template:
+        src: templates/prometheus.yml.j2
+        dest: /opt/prometheus/prometheus.yml
+        mode: "0644"
+      notify:
+        - Restart prometheus
+
+    - name: Install Dependencies for Grafana
+      ansible.builtin.apt:
+        name: ["libfontconfig1", "adduser"]
+        state: present
+  
+    - name: Install Grafana
+      ansible.builtin.apt:
+        deb: "https://dl.grafana.com/oss/release/grafana_9.5.3_amd64.deb"
+      notify: Restart grafana
+    
+      
+
+
+    when: inventory_hostname == "prometheus"
+
+
+#  - name: debug
+#    debug:
+#      var: hostvars.node1.ansible_host
+
+
+  handlers:
+  - name: Reload systemd
+    systemd: daemon_reload=true
+
+  - name: Restart cadvisor
+    service: name=cadvisor state=restarted enabled=true
+
+  - name: Restart node_exporter
+    service: name=node_exporter state=restarted enabled=true
+
+  - name: Restart grafana
+    service: name=grafana-server state=restarted enabled=true
+
+  - name: Restart prometheus
+    service: name=prometheus state=restarted enabled=true
+
